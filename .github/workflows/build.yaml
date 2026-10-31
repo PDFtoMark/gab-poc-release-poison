@@ -1,0 +1,10 @@
+name: Build binaries
+on:
+  push:
+    branches:
+      - never-match-this-branch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "parent placeholder build"
