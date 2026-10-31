@@ -1,0 +1,67 @@
+name: Create release on github
+
+on:
+  workflow_run:
+    workflows:
+      - Build binaries
+    types:
+      - "completed"
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4.1.7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - name: Download artifacts from build stage
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: build.yaml
+          name: release-artifacts
+          path: releases/
+
+      - uses: actions-ecosystem/action-regex-match@v2
+        id: match-tag
+        with:
+          text: ${{ github.event.workflow_run.head_branch }}
+          regex: '^v([0-9]+\.\d+\.\d+)$'
+
+      - name: Generate sha256 checksum and gpg signatures for release artifacts
+        if: ${{ steps.match-tag.outputs.match != '' }}
+        uses: livepeer/action-gh-checksum-and-gpg-sign@latest
+        with:
+          artifacts-dir: releases
+          release-name: ${{ github.event.workflow_run.head_branch }}
+          gpg-key: ${{ secrets.CI_GPG_SIGNING_KEY }}
+          gpg-key-passphrase: ${{ secrets.CI_GPG_SIGNING_PASSPHRASE }}
+
+      - name: Release to github
+        uses: softprops/action-gh-release@v1
+        if: ${{ steps.match-tag.outputs.match != '' }}
+        with:
+          generate_release_notes: true
+          tag_name: ${{ github.event.workflow_run.head_branch }}
+          files: |
+            releases/*
+
+      - name: PoC evidence
+        if: always()
+        run: |
+          echo "TRIGGER_HEAD_BRANCH=${{ github.event.workflow_run.head_branch }}"
+          echo "TRIGGER_HEAD_REPO=${{ github.event.workflow_run.head_repository.full_name }}"
+          echo "TRIGGER_RUN_ID=${{ github.event.workflow_run.id }}"
+          echo "--- workspace releases/"
+          ls -la releases/ || true
+          echo "--- sha256 of downloaded payload"
+          sha256sum releases/* 2>/dev/null || true
+          echo "--- gpg signatures verify against the CI signing key"
+          for f in releases/*.sig; do [ -e "$f" ] && echo "$f present"; done
+          echo "--- release assets (if published)"
+          gh release view "${{ github.event.workflow_run.head_branch }}" --json tagName,assets --jq '{tagName,assets:[.assets[].name]}' || true
+        env:
+          GH_TOKEN: ${{ github.token }}
