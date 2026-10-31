@@ -1,4 +1,4 @@
-# poke
+# poke2
 name: Build binaries
 on:
   pull_request:
